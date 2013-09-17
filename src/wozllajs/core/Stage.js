@@ -26,7 +26,7 @@ this.wozllajs = this.wozllajs || {};
 
 	p.height = 0;
 
-	p.autoClear = true;
+	p.autoClear = false;
 
 	p.GameObject_initialize = p.initialize;
 
@@ -38,8 +38,14 @@ this.wozllajs = this.wozllajs || {};
 		this.width = width || 0;
 		this.height = height || 0;
 		this.stageCanvas.width = this.width;
-		this.stageCanvas.height=  this.height;
+		this.stageCanvas.height = this.height;
 	};
+
+    p.tick = function() {
+        this.update();
+        this.lateUpdate();
+        this.draw();
+    };
 
 	p.GameObject_draw = p.draw;
 

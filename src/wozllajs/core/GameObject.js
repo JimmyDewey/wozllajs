@@ -15,7 +15,11 @@ this.wozllajs = this.wozllajs || {};
 
 	GameObject.prototype = {
 
+        UID : null,
+
 		id : null,
+
+        isGameObject : true,
 
 		transform : null,
 
@@ -23,7 +27,11 @@ this.wozllajs = this.wozllajs || {};
 
 		_collider : null,
 
+        _layout : null,
+
 		_behaviours : null,
+
+        _aliasMap : null,
 
 		_parent : null,
 
@@ -45,10 +53,22 @@ this.wozllajs = this.wozllajs || {};
 
 		_resources : null,
 
+        _cacheCanvas : null,
+
+        _cacheContext : null,
+
+        _cached : false,
+
+        _cacheOffsetX : 0,
+
+        _cacheOffsetY : 0,
+
 		initialize : function(id) {
+            this.UID = wozllajs.UniqueKeyGen ++;
 			this.id = id;
 			this.transform = new wozllajs.Transform();
 			this._behaviours = {};
+            this._aliasMap = {};
 			this._children = [];
 			this._childrenMap = {};
 			this._resources = [];
@@ -57,6 +77,17 @@ this.wozllajs = this.wozllajs || {};
 		getParent : function() {
 			return this._parent;
 		},
+
+        getPath : function(seperator) {
+            var o = this;
+            var path = [];
+            var deep = 0;
+            while(o) {
+                path.unshift(o.id);
+                o = o._parent;
+            }
+            return path.join(seperator || '.');
+        },
 
         getStage : function() {
             var o = this;
@@ -120,6 +151,14 @@ this.wozllajs = this.wozllajs || {};
             return obj;
         },
 
+        getChildren : function() {
+            return this._children;
+        },
+
+        sortChildren : function(func) {
+            this._children.sort(func);
+        },
+
 	    isActive : function() {
 	    	return this._active;
 	    },
@@ -147,8 +186,35 @@ this.wozllajs = this.wozllajs || {};
             return o && o._layer;
         },
 
+        getEventLayer : function() {
+            var layer;
+            var layerZ;
+            var layers;
+            var i, len;
+            var o = this;
+            var getLayerZ = wozllajs.LayerManager.getLayerZ;
+            while(o) {
+                if(o._layer) {
+                    layers = o._layer.split(',');
+                    for(i=0,len=layers.length; i<len; i++) {
+                        layer = layers[i];
+                        layerZ = getLayerZ(layer);
+                        if(parseInt(layerZ) === layerZ) {
+                            return layer;
+                        }
+                    }
+                }
+                o = o._parent;
+            }
+            return -9999999;
+        },
+
         setLayer : function(layer) {
             this._layer = layer;
+        },
+
+        isInLayer : function(layer) {
+            return this._layer && this._layer.indexOf(layer) !== -1;
         },
 
         isMouseEnable : function() {
@@ -163,7 +229,11 @@ this.wozllajs = this.wozllajs || {};
             var hit = false;
             if(this._hitTestDelegate) {
                 hit = this._hitTestDelegate.testHit(x, y);
-            } else {
+            }
+            else if(this._cacheCanvas && this._cached) {
+                hit = this._cacheContext.getImageData(-this._cacheOffsetX+x, -this._cacheOffsetY+y, 1, 1).data[3] > 1;
+            }
+            else {
                 testHitContext.setTransform(1, 0, 0, 1, -x, -y);
                 this._draw(testHitContext, this.getStage().getVisibleRect());
                 hit = testHitContext.getImageData(0, 0, 1, 1).data[3] > 1;
@@ -193,13 +263,14 @@ this.wozllajs = this.wozllajs || {};
 	                }
 	            }
 	        }
+            this.uncache();
 		},
 
 	    init : function() {
-	    	var i, len;
+	    	var i, len, layers;
 			var behaviourId, behaviour;
 			var children = this._children;
-
+            this._layout && this._layout.initComponent();
 	    	this._renderer && this._renderer.initComponent();
 	    	this._collider && this._collider.initComponent();
 	    	for(behaviourId in this._behaviours) {
@@ -211,7 +282,12 @@ this.wozllajs = this.wozllajs || {};
 	    		children[i].init();
 	    	}
             if(this._layer) {
-                wozllajs.LayerManager.appendTo(this._layer, this);
+                layers = this._layer.split(',');
+                for(i=0,len=layers.length; i<len; i++) {
+                    if(layers[i]) {
+                        wozllajs.LayerManager.appendTo(layers[i], this);
+                    }
+                }
             }
 	    	this._componentInited = true;
 		},
@@ -227,12 +303,21 @@ this.wozllajs = this.wozllajs || {};
 	    	}
 	    	this._collider && this._collider.destroyComponent();
 	    	this._renderer && this._renderer.destroyComponent();
-
+            this._layout && this._layout.destroyComponent();
 	    	for(i=0,len=children.length; i<len; i++) {
 	    		children[i].destroy();
 	    	}
             wozllajs.LayerManager.removeFrom(this._layer, this);
 		},
+
+        layout : function() {
+            var i, len;
+            var children = this._children;
+            this._layout && this._layout.doLayout();
+            for(i=0,len=children.length; i<len; i++) {
+                children[i].layout();
+            }
+        },
 
 		update : function() {
 			var i, len;
@@ -242,7 +327,6 @@ this.wozllajs = this.wozllajs || {};
 			if(!this._componentInited || !this._active) {
 				return;
 			}
-
 			for(behaviourId in this._behaviours) {
 	    		behaviour = this._behaviours[behaviourId];
 	    		behaviour && behaviour.update && behaviour.update();
@@ -288,7 +372,7 @@ this.wozllajs = this.wozllajs || {};
                     cacheContext.translate(this._cacheOffsetX, this._cacheOffsetY);
                     this._cached = true;
                 }
-                context.drawImage(this._cacheCanvas, 0, 0);
+                context.drawImage(this._cacheCanvas, this._cacheOffsetX, this._cacheOffsetY);
             } else {
 			    this._draw(context, visibleRect);
             }
@@ -310,8 +394,9 @@ this.wozllajs = this.wozllajs || {};
         uncache : function() {
             if(this._cacheCanvas) {
                 this._cacheCanvas.dispose && this._cacheCanvas.dispose();
+                this._cacheCanvas = null;
             }
-            this.cached = false;
+            this._cached = false;
         },
 
 		setRenderer : function(renderer) {
@@ -325,14 +410,25 @@ this.wozllajs = this.wozllajs || {};
 
 		setCollider : function(collider) {
 			this._collider = collider;
+            this._collider.setGameObject(this);
 		},
 
 		getCollider : function() {
 			return this._collider;
 		},
 
+        setLayout : function(layout) {
+            this._layout = layout;
+            this._layout.setGameObject(this);
+        },
+
+        getLayout : function() {
+            return this._layout;
+        },
+
         setHitTestDelegate : function(delegate) {
             this._hitTestDelegate = delegate;
+            this._hitTestDelegate.setGameObject(this);
         },
 
         getHitTestDelegate : function() {
@@ -341,6 +437,7 @@ this.wozllajs = this.wozllajs || {};
 
 		addBehaviour : function(behaviour) {
 			this._behaviours[behaviour.id] = behaviour;
+            this._aliasMap[behaviour.alias] = behaviour;
 			behaviour.setGameObject(this);
 		},
 
@@ -352,23 +449,34 @@ this.wozllajs = this.wozllajs || {};
                 }
             }
 			delete this._behaviours[behaviour.id];
+            delete this._aliasMap[behaviour.alias]
 			behaviour.setGameObject(null);
 		},
 
 		getBehaviour : function(id) {
-			return this._behaviours[id];
+			return this._behaviours[id] || this._aliasMap[id];
 		},
 
-        on : function(type, listener) {
-            wozllajs.EventAdmin.on(type, this, listener);
+        on : function(type, listener, scope) {
+            var proxy = listener[this._getSimpleProxyKey(scope, type)] = wozllajs.proxy(listener, scope);
+            wozllajs.EventAdmin.on(type, this, proxy, scope);
         },
 
-        off : function(type, listener) {
-            wozllajs.EventAdmin.off(type, this, listener);
+        once : function(type, listener, scope) {
+            var proxy = listener[this._getSimpleProxyKey(scope, type)] = wozllajs.proxy(listener, scope);
+            wozllajs.EventAdmin.once(type, this, proxy, scope);
+        },
+
+        off : function(type, listener, scope) {
+            wozllajs.EventAdmin.off(type, this, listener[this._getSimpleProxyKey(scope, type)]);
         },
 
         notify : function(type, params) {
             wozllajs.EventAdmin.notify(type, params);
+        },
+
+        _getSimpleProxyKey : function(scope, type) {
+            return '_sp_' + scope.UID + '.' + type;
         },
 
 		_draw : function(context, visibleRect) {

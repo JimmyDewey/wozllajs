@@ -1705,12 +1705,16 @@ this.wozllajs = this.wozllajs || {};
 
     var componentMap = {};
 
+    wozllajs.UniqueKeyGen = 0;
+
+    wozllajs.debug = false;
+
     wozllajs.isTouchSupport = 'ontouchstart' in window;
 
     wozllajs.proxy = function (method, scope) {
         var aArgs = Array.prototype.slice.call(arguments, 2);
         return function () {
-            return method.apply(scope, Array.prototype.slice.call(arguments, 0).concat(aArgs));
+            return method.apply(scope || method, Array.prototype.slice.call(arguments, 0).concat(aArgs));
         };
     };
 
@@ -1719,7 +1723,7 @@ this.wozllajs = this.wozllajs || {};
     };
 
     wozllajs.is = function(testObj, type) {
-        return toString.call(testObj).toLowerCase() === type.toLowerCase();
+        return toString.call(testObj).toLowerCase() === '[object ' + type.toLowerCase() + ']';
     };
 
     wozllajs.indexOf = function(obj, arr) {
@@ -1740,6 +1744,29 @@ this.wozllajs = this.wozllajs || {};
         return idx;
     };
 
+    wozllajs.createCanvas = function(width, height) {
+        var c = document.createElement('canvas');
+        c.width = width;
+        c.height = height;
+        return c;
+    };
+
+    wozllajs.namespace = function(ns, root) {
+        var NSList = ns.split(".");
+        var step = root || wozllajs;
+        var k = null;
+        while (k = NSList.shift()) {
+            if (step[k] === undefined) {
+                if(wozllajs.debug) {
+                    console.log("[Warn] can't found namespace '" + ns + "'");
+                }
+                return null;
+            }
+            step = step[k];
+        }
+        return step;
+    };
+
     wozllajs.printComponent = function() {
         console.log('ComponentMap: ', componentMap);
     };
@@ -1747,7 +1774,8 @@ this.wozllajs = this.wozllajs || {};
     wozllajs.createComponent = function(namespace, params) {
         var cmpConstructor = componentMap[namespace];
         if(!cmpConstructor) {
-            throw new Error("Can't find Component '" + namespace + "'");
+            console.log("Can't find Component '" + namespace + "'");
+            return null;
         }
         return new cmpConstructor(params);
     };
@@ -1756,8 +1784,13 @@ this.wozllajs = this.wozllajs || {};
         var NSList = namespace.split(".");
         var step = wozllajs;
         var k = null;
+        var superConstructor;
         var cmpConstructor;
         var cmpProto;
+        var extend;
+        var baseCmp;
+        var superName;
+        var name = namespace.indexOf('.') !== -1 ? namespace.substr(namespace.lastIndexOf('.')+1) : namespace;
         while (k = NSList.shift()) {
             if (NSList.length) {
                 if (step[k] === undefined) {
@@ -1766,17 +1799,76 @@ this.wozllajs = this.wozllajs || {};
                 step = step[k];
             } else {
                 if(step[k]) {
-                    console.log('The namespace "' + namespace + '" has been regsitered, override it.');
+                    //console.log('The namespace "' + namespace + '" has been regsitered, override it.');
                 }
-                cmpConstructor = step[k] = maker();
-                cmpProto = cmpConstructor.prototype;
-                componentMap[namespace] = cmpConstructor;
-                componentMap[cmpProto.alias] = cmpConstructor;
+                if(typeof maker === 'function') {
+                    cmpConstructor = maker();
+                } else if(typeof maker === 'object') {
+                    baseCmp = {
+                        'Renderer' : wozllajs.Renderer,
+                        'Collider' : wozllajs.Collider,
+                        'Layout'   : wozllajs.Layout,
+                        'Behaviour' : wozllajs.Behaviour,
+                        'HitTestDelegate' : wozllajs.HitTestDelegate
+                    };
+                    extend = maker.extend;
+                    delete maker.extend;
+                    superName = extend.indexOf('.') !== -1 ? extend.substr(extend.lastIndexOf('.')+1) : extend;
+                    superConstructor = baseCmp[extend] || componentMap[extend];
+                    cmpConstructor = wozllajs.Component.decorate(name, maker, superName, superConstructor);
+                }
+                if(cmpConstructor) {
+                    cmpProto = cmpConstructor.prototype;
+                    cmpProto.id = namespace;
+                    componentMap[namespace] = cmpConstructor;
+                    componentMap[cmpProto.alias] = cmpConstructor;
+                    step[k] = cmpConstructor;
+                } else {
+                    throw new Error('Error in defineComponent: ' + namespace);
+                }
             }
         }
     };
     
 })();;
+
+this.wozllajs = this.wozllajs || {};
+
+this.wozllajs.geom = {
+    vectorLength : function(v) {
+        return Math.sqrt(v.x * v.x + v.y * v.y);
+    },
+    vectorNomalize : function(v) {
+        var len = Math.sqrt(v.x * v.x + v.y * v.y);
+        if (len <= Number.MIN_VALUE) {
+            return 0.0;
+        }
+        var invL = 1.0 / len;
+        v.x *= invL;
+        v.y *= invL;
+        return len;
+    },
+    rectIntersection : function(a, b) {
+        return a.x < b.x + b.width &&
+            b.x < a.x + a.width &&
+            a.y < b.y + b.height &&
+            b.y < a.y + a.height;
+    },
+    rectIntersection2 : function(ax, ay, aw, ah, bx, by, bw, bh) {
+        return ax < bx + bw &&
+            bx < ax + aw &&
+            ay < by + bh &&
+            by < ay + ah;
+    },
+    pointInRect : function(p, r) {
+        return r.x <= p.x && r.x + r.width >= p.x &&
+            r.y <= p.y && r.y + r.height >= p.y;
+    },
+    pointInRect2 : function(x, y, rx, ry, rw, rh) {
+        return rx <= x && rx + rw >= x &&
+            ry <= y && ry + rh >= y;
+    }
+};;
 
 this.wozllajs = this.wozllajs || {};
 
@@ -1793,9 +1885,9 @@ this.wozllajs = this.wozllajs || {};
         },
         get : function(key) {
             if(key === undefined) {
-                return data;
+                return this.data;
             }
-            return this.data[key];
+            return this.data[key] || [];
         },
         sort : function(key, sorter) {
             this.data[key].sort(sorter);
@@ -1841,11 +1933,14 @@ this.wozllajs = this.wozllajs || {};
 	};
 	
 	EventDispatcher.prototype = {
-        addEventListener : function(type, listener) {
+        addEventListener : function(type, listener, once) {
+            if(once) {
+                listener._once_flag = true;
+            }
             this.listenerMap.push(type, listener);
         },
         removeEventListener : function(type, listener) {
-            this.listenerMap.remove(type, listener);
+            return this.listenerMap.remove(type, listener);
         },
         getListenersByType : function(type) {
             return this.listenerMap.get(type);
@@ -1859,8 +1954,8 @@ this.wozllajs = this.wozllajs || {};
         clear : function() {
             this.listenerMap.clear();
         },
-        sort : function(func) {
-            this.listenerMap.sort(func);
+        sort : function(type, func) {
+            this.listenerMap.sort(type, func);
         },
         fireEvent : function(type, params, async) {
             var i, len, listener, ret;
@@ -1873,18 +1968,24 @@ this.wozllajs = this.wozllajs || {};
             if(async) {
                 for(i=0, len=listeners.length; i<len; i++) {
                     listener = listeners[i];
-                    (function(l) {
+                    (function(d, t, p, l) {
                         setTimeout(function() {
-                            l.apply(l, [params]);
+                            if(l._once_flag) {
+                                d.removeEventListener(t, l);
+                            }
+                            l.apply(l, [p]);
                         }, 0);
-                    })(listener);
+                    })(this, type, params, listener);
                 }
             } else {
                 for(i=0, len=listeners.length; i<len; i++) {
                     listener = listeners[i];
-                   if(false === listener.apply(listener, [params])) {
-                       return;
-                   }
+                    if(listener._once_flag) {
+                        this.removeEventListener(type, listener);
+                    }
+                    if(false === listener.apply(listener, [params])) {
+                        return;
+                    }
                 }
             }
         }
@@ -1941,10 +2042,10 @@ this.wozllajs.Touch = (function() {
         'dblclick' : true
     };
 
+    function emptyTouchStart() {}
     var listenerHolder = new wozllajs.EventDispatcher();
     var objectTouchListenerMap = {};
     var touchedGameObject;
-    var touchedListener;
 
     function getCanvasOffset() {
         var obj = topCanvas;
@@ -1954,6 +2055,10 @@ this.wozllajs.Touch = (function() {
             offset.y += obj.offsetTop;
         }
         return offset;
+    }
+
+    function getListenerTouchStartKey() {
+        return '_listener_touchstart';
     }
 
     function dispatchEvent(e) {
@@ -1970,25 +2075,29 @@ this.wozllajs.Touch = (function() {
 
     function onTouchStart(e) {
         var i, len, listeners, listener;
-        var gameObject, handler;
+        var gameObject, handler, localPos;
         var type = e.type;
         var x = e.x;
         var y = e.y;
         touchedGameObject = null;
-        touchedListener = null;
         listeners = listenerHolder.getListenersByType(type);
         if(listeners) {
+            listeners = [].concat(listeners);
             for(i=0,len=listeners.length; i<len; i++) {
                 listener = listeners[i];
                 gameObject = listener.gameObject;
                 handler = listener.handler;
-                if(touchedGameObject && touchedGameObject === gameObject) {
-                    handler && handler(e);
+                if(!touchedGameObject) {
+                    localPos = gameObject.transform.globalToLocal(x, y);
+                    if(gameObject.testHit(localPos.x, localPos.y)) {
+                        touchedGameObject = gameObject;
+                        handler && handler(e);
+                    }
                 }
-                else if(gameObject.testHit(x, y)) {
-                    touchedGameObject = gameObject;
-                    touchedListener = listener;
-                    handler && handler(e);
+                else if(touchedGameObject === gameObject) {
+                    if(handler && handler !== emptyTouchStart) {
+                        handler(e);
+                    }
                 }
             }
         }
@@ -2000,6 +2109,7 @@ this.wozllajs.Touch = (function() {
         var type = e.type;
         listeners = listenerHolder.getListenersByType(type);
         if(listeners) {
+            listeners = [].concat(listeners);
             for(i=0,len=listeners.length; i<len; i++) {
                 listener = listeners[i];
                 gameObject = listener.gameObject;
@@ -2017,6 +2127,7 @@ this.wozllajs.Touch = (function() {
         var type = e.type;
         listeners = listenerHolder.getListenersByType(type);
         if(listeners) {
+            listeners = [].concat(listeners);
             for(i=0,len=listeners.length; i<len; i++) {
                 listener = listeners[i];
                 gameObject = listener.gameObject;
@@ -2030,35 +2141,45 @@ this.wozllajs.Touch = (function() {
 
     function onClick(e) {
         var i, len, listeners, listener;
-        var gameObject, handler;
+        var gameObject, handler, localPos;
         var type = e.type;
         var x = e.x;
         var y = e.y;
-        listeners = listenerHolder.getListenersByType(type);
+        listeners = [].concat(listenerHolder.getListenersByType(type));
         if(listeners) {
+            listeners = [].concat(listeners);
             for(i=0,len=listeners.length; i<len; i++) {
                 listener = listeners[i];
                 gameObject = listener.gameObject;
                 handler = listener.handler;
-                if(touchedGameObject && touchedGameObject === gameObject && gameObject.testHit(x, y)) {
-                    handler && handler(e);
+                if(touchedGameObject && touchedGameObject === gameObject) {
+                    localPos = gameObject.transform.globalToLocal(x, y);
+                    if(gameObject.testHit(localPos.x, localPos.y)) {
+                        handler && handler(e);
+                    }
                 }
             }
         }
     }
 
     function onEvent(e) {
-        var touchEvent, canvasOffset, x, y;
+        var touchEvent, canvasOffset, x, y, t;
         var type = e.type;
         canvasOffset = getCanvasOffset();
         if (!e.touches) {
             x = e.pageX - canvasOffset.x;
             y = e.pageY - canvasOffset.y;
         }
+        // touch event
         else if(e.changedTouches) {
-            var t = e.changedTouches[0];
-            x = t.pageX - canvasOffset.x;
-            y = t.pageY - canvasOffset.y;
+            t = e.changedTouches[0];
+            if(e.type === 'click') {
+                x = e.pageX - canvasOffset.x;
+                y = e.pageY - canvasOffset.y;
+            } else {
+                x = t.pageX - canvasOffset.x;
+                y = t.pageY - canvasOffset.y;
+            }
         }
         if(type === 'mousedown') {
             type = 'touchstart';
@@ -2072,6 +2193,7 @@ this.wozllajs.Touch = (function() {
         touchEvent = new wozllajs.TouchEvent(x, y, type, e);
         dispatchEvent(touchEvent);
     }
+
 
 
     return {
@@ -2107,30 +2229,58 @@ this.wozllajs.Touch = (function() {
         },
 
         on : function(type, gameObject, listener) {
-            var getLayerZ = wozllajs.LayerManager.getLayerZ;
+            var autoTouchstartList, autoTouchstart;
+            var layerZ = wozllajs.LayerManager.getLayerZ(gameObject.getEventLayer());
             type = mouseTouchMap[type] || type;
+            if(type !== 'touchstart') {
+                autoTouchstartList = listener[getListenerTouchStartKey()]
+                    = listener[getListenerTouchStartKey()] || [];
+                autoTouchstart = {
+                    gameObject : gameObject,
+                    handler : emptyTouchStart,
+                    layerZ : layerZ
+                };
+                autoTouchstartList.push(autoTouchstart);
+                listenerHolder.addEventListener('touchstart', autoTouchstart);
+                listenerHolder.sort('touchstart', function(a, b) {
+                    return b.layerZ - a.layerZ;
+                });
+            }
             listenerHolder.addEventListener(type, {
                 gameObject : gameObject,
-                handler : listener
+                handler : listener,
+                layerZ : layerZ
             });
             listenerHolder.sort(type, function(a, b) {
-                return getLayerZ(b.gameObject.getLayer(true)) - getLayerZ(a.gameObject.getLayer(true));
+                return b.layerZ - a.layerZ;
             });
         },
 
         off : function(type, gameObject, listener) {
-            var i, l, len;
-            var listeners = listenerHolder.get(type);
+            var i, l, len, j, len2, autoTouchstartList;
+            var listeners = listenerHolder.getListenersByType(type);
             type = mouseTouchMap[type] || type;
             if(listeners) {
                 for(i=0,len=listeners.length; i<len; i++) {
                     l = listeners[i];
-                    if(l.gameObject === gameObject && l.listener === listener) {
-                        listenerHolder.remove(type, l);
+                    if(l.gameObject === gameObject && l.handler === listener) {
+
+                        listenerHolder.removeEventListener(type, l);
+                        autoTouchstartList = listener[getListenerTouchStartKey()];
+                        if(autoTouchstartList) {
+                            for(j=0,len2=autoTouchstartList.length; j<len2; j++) {
+                                listenerHolder.removeEventListener('touchstart', autoTouchstartList[j]);
+                            }
+                            delete listener[getListenerTouchStartKey()];
+                        }
                         return;
                     }
                 }
             }
+        },
+
+        getListenerHolder : function() {
+            return listenerHolder;
         }
     }
 
@@ -2157,29 +2307,53 @@ this.wozllajs.EventAdmin = (function() {
 
     var eventDispatcher = new wozllajs.EventDispatcher();
 
+    function getProxyKey(type) {
+        return '_wozllajs_proxy_' + type;
+    }
+
     return {
 
-        on : function(type, gameObject, listener) {
-            var proxy = listener['_wozllajs_proxy_' + type] = wozllajs.proxy(listener, gameObject);
+        once : function(type, gameObject, listener, scope) {
+            wozllajs.EventAdmin.on(type, gameObject, listener, scope, true);
+        },
 
-            if(wozllajs.Touch.isTouchEvent(type)) {
-                wozllajs.Touch.on(type, gameObject, listener);
-                return;
+        on : function(type, gameObject, listener, scope, once) {
+            var proxyKey, proxy;
+            if(typeof gameObject === 'function') {
+                listener = gameObject;
             }
-
-            eventDispatcher.addEventListener(type, proxy);
+            proxyKey = getProxyKey(type);
+            proxy = wozllajs.proxy(listener, scope || window);
+            listener[proxyKey] = listener[proxyKey] || [];
+            listener[proxyKey].push(proxy);
+            if(wozllajs.Touch.isTouchEvent(type)) {
+                wozllajs.Touch.on(type, gameObject, proxy);
+            } else {
+                eventDispatcher.addEventListener(type, proxy, once);
+            }
         },
 
         off : function(type, gameObject, listener) {
-            var proxy = listener['_wozllajs_proxy_' + type];
-            listener['_wozllajs_proxy_' + type] = false;
-            if(proxy) {
-                if(wozllajs.Touch.isTouchEvent(type)) {
-                    wozllajs.Touch.off(type, gameObject, listener);
-                    return;
-                }
-                eventDispatcher.removeEventListener(type, proxy);
+            if(typeof gameObject === 'function') {
+                listener = gameObject;
             }
+            var proxy, i, len;
+            var proxyKey = getProxyKey(type);
+            var proxies = listener[proxyKey];
+            var isTouch = wozllajs.Touch.isTouchEvent(type);
+            if(proxies) {
+                for(i=0,len=proxies.length; i<len; i++) {
+                    proxy = proxies[i];
+                    if(proxy) {
+                        if(isTouch) {
+                            wozllajs.Touch.off(type, gameObject, proxy);
+                        } else {
+                            eventDispatcher.removeEventListener(type, proxy);
+                        }
+                    }
+                }
+            }
+            delete listener[proxyKey];
         },
 
         notify : function(type, params) {
@@ -2298,6 +2472,16 @@ this.wozllajs.ResourceManager = (function() {
     var queue = new createjs.LoadQueue();
     queue.setUseXHR(false);
 
+    var handlerQueue = [];
+
+    var loading = false;
+
+    function loadNext() {
+        if(loading) return;
+        var handler = handlerQueue.shift();
+        handler && handler()
+    }
+
     return {
 
         getResource : function(id) {
@@ -2309,25 +2493,48 @@ this.wozllajs.ResourceManager = (function() {
         },
 
         load : function(params) {
-            if(params.items.length === 0) {
-                setTimeout(params.onProgress, 0);
-                setTimeout(params.onComplete, 1);
-                return;
-            }
-            var total = params.items.length;
-            var loaded = 0;
-            queue.addEventListener('fileload', function() {
-                params.onProgress && params.onProgress({
-                    total : total,
-                    loaded : ++loaded,
-                    progress : loaded/total
+            var loadHandler = function() {
+                loading = true;
+                //console.log(params.items);
+                var mark = {};
+                var item;
+                for(var i= 0; i<params.items.length; i++) {
+                    item = params.items[i];
+                    if(typeof item === 'object') {
+                        item = item.id;
+                    }
+                    if(mark[item] || wozllajs.ResourceManager.getResource(item)) {
+                        params.items.splice(i, 1);
+                        i--;
+                    }
+                    mark[item] = true;
+                }
+                if(params.items.length === 0) {
+                    setTimeout(params.onProgress, 0);
+                    setTimeout(params.onComplete, 1);
+                    loading = false;
+                    loadNext();
+                    return;
+                }
+                var total = params.items.length;
+                var loaded = 0;
+                queue.addEventListener('fileload', function(e) {
+                    params.onProgress && params.onProgress({
+                        total : total,
+                        loaded : ++loaded,
+                        progress : loaded/total
+                    });
                 });
-            });
-            queue.addEventListener('complete', function() {
-                queue.removeAllEventListeners();
-                params.onComplete && params.onComplete();
-            });
-            queue.loadManifest(params.items);
+                queue.addEventListener('complete', function() {
+                    queue.removeAllEventListeners();
+                    params.onComplete && params.onComplete();
+                    loading = false;
+                    loadNext();
+                });
+                queue.loadManifest(params.items);
+            };
+            handlerQueue.push(loadHandler);
+            loadNext();
         },
 
         disposeImage : function(image) {
@@ -2342,12 +2549,23 @@ this.wozllajs = this.wozllajs || {};
 this.wozllajs.LayerManager = (function() {
 
     var layerObjects = new wozllajs.Array2D(); // TODO 固定array2D
-    var layers = null;
+    var layers = {};
+    var layerList = [];
 
     return {
 
         init : function(theLayers) {
+            var name;
             layers = theLayers;
+            for(name in theLayers) {
+                layerList.push({
+                    name : name,
+                    z : theLayers[name]
+                });
+            }
+            layerList.sort(function(a, b) {
+                return b.z - a.z;
+            });
         },
 
         appendTo : function(layerId, gameObject) {
@@ -2363,7 +2581,11 @@ this.wozllajs.LayerManager = (function() {
         },
 
         getLayerObjects : function(layerId) {
-            return [].concat(layerObjects.get(layerId));
+            return layerObjects.get(layerId);
+        },
+
+        getSortedLayerList : function() {
+            return layerList;
         }
     }
 
@@ -2386,7 +2608,11 @@ this.wozllajs = this.wozllajs || {};
 
 	GameObject.prototype = {
 
+        UID : null,
+
 		id : null,
+
+        isGameObject : true,
 
 		transform : null,
 
@@ -2394,7 +2620,11 @@ this.wozllajs = this.wozllajs || {};
 
 		_collider : null,
 
+        _layout : null,
+
 		_behaviours : null,
+
+        _aliasMap : null,
 
 		_parent : null,
 
@@ -2416,10 +2646,22 @@ this.wozllajs = this.wozllajs || {};
 
 		_resources : null,
 
+        _cacheCanvas : null,
+
+        _cacheContext : null,
+
+        _cached : false,
+
+        _cacheOffsetX : 0,
+
+        _cacheOffsetY : 0,
+
 		initialize : function(id) {
+            this.UID = wozllajs.UniqueKeyGen ++;
 			this.id = id;
 			this.transform = new wozllajs.Transform();
 			this._behaviours = {};
+            this._aliasMap = {};
 			this._children = [];
 			this._childrenMap = {};
 			this._resources = [];
@@ -2428,6 +2670,17 @@ this.wozllajs = this.wozllajs || {};
 		getParent : function() {
 			return this._parent;
 		},
+
+        getPath : function(seperator) {
+            var o = this;
+            var path = [];
+            var deep = 0;
+            while(o) {
+                path.unshift(o.id);
+                o = o._parent;
+            }
+            return path.join(seperator || '.');
+        },
 
         getStage : function() {
             var o = this;
@@ -2445,6 +2698,7 @@ this.wozllajs = this.wozllajs || {};
 	        this._childrenMap[obj.id] = obj;
 	        this._children.push(obj);
 	        obj._parent = this;
+            obj.transform.parent = this.transform;
 	    },
 
 	    removeObject : function(idOrObj) {
@@ -2453,6 +2707,8 @@ this.wozllajs = this.wozllajs || {};
 	        var idx = wozllajs.arrayRemove(obj, children);
 	        if(idx !== -1) {
 	            delete this._childrenMap[obj.id];
+                obj._parent = null;
+                obj.transform.parent = null;
 	        }
 	        return idx;
 	    },
@@ -2488,6 +2744,14 @@ this.wozllajs = this.wozllajs || {};
             return obj;
         },
 
+        getChildren : function() {
+            return this._children;
+        },
+
+        sortChildren : function(func) {
+            this._children.sort(func);
+        },
+
 	    isActive : function() {
 	    	return this._active;
 	    },
@@ -2515,8 +2779,35 @@ this.wozllajs = this.wozllajs || {};
             return o && o._layer;
         },
 
+        getEventLayer : function() {
+            var layer;
+            var layerZ;
+            var layers;
+            var i, len;
+            var o = this;
+            var getLayerZ = wozllajs.LayerManager.getLayerZ;
+            while(o) {
+                if(o._layer) {
+                    layers = o._layer.split(',');
+                    for(i=0,len=layers.length; i<len; i++) {
+                        layer = layers[i];
+                        layerZ = getLayerZ(layer);
+                        if(parseInt(layerZ) === layerZ) {
+                            return layer;
+                        }
+                    }
+                }
+                o = o._parent;
+            }
+            return -9999999;
+        },
+
         setLayer : function(layer) {
             this._layer = layer;
+        },
+
+        isInLayer : function(layer) {
+            return this._layer && this._layer.indexOf(layer) !== -1;
         },
 
         isMouseEnable : function() {
@@ -2531,9 +2822,13 @@ this.wozllajs = this.wozllajs || {};
             var hit = false;
             if(this._hitTestDelegate) {
                 hit = this._hitTestDelegate.testHit(x, y);
-            } else {
+            }
+            else if(this._cacheCanvas && this._cached) {
+                hit = this._cacheContext.getImageData(-this._cacheOffsetX+x, -this._cacheOffsetY+y, 1, 1).data[3] > 1;
+            }
+            else {
                 testHitContext.setTransform(1, 0, 0, 1, -x, -y);
-                this.draw(testHitContext, this.getStage().getVisibleRect());
+                this._draw(testHitContext, this.getStage().getVisibleRect());
                 hit = testHitContext.getImageData(0, 0, 1, 1).data[3] > 1;
                 testHitContext.setTransform(1, 0, 0, 1, 0, 0);
                 testHitContext.clearRect(0, 0, 2, 2);
@@ -2561,13 +2856,14 @@ this.wozllajs = this.wozllajs || {};
 	                }
 	            }
 	        }
+            this.uncache();
 		},
 
 	    init : function() {
-	    	var i, len;
+	    	var i, len, layers;
 			var behaviourId, behaviour;
 			var children = this._children;
-
+            this._layout && this._layout.initComponent();
 	    	this._renderer && this._renderer.initComponent();
 	    	this._collider && this._collider.initComponent();
 	    	for(behaviourId in this._behaviours) {
@@ -2579,7 +2875,12 @@ this.wozllajs = this.wozllajs || {};
 	    		children[i].init();
 	    	}
             if(this._layer) {
-                wozllajs.LayerManager.appendTo(this._layer, this);
+                layers = this._layer.split(',');
+                for(i=0,len=layers.length; i<len; i++) {
+                    if(layers[i]) {
+                        wozllajs.LayerManager.appendTo(layers[i], this);
+                    }
+                }
             }
 	    	this._componentInited = true;
 		},
@@ -2595,12 +2896,21 @@ this.wozllajs = this.wozllajs || {};
 	    	}
 	    	this._collider && this._collider.destroyComponent();
 	    	this._renderer && this._renderer.destroyComponent();
-
+            this._layout && this._layout.destroyComponent();
 	    	for(i=0,len=children.length; i<len; i++) {
 	    		children[i].destroy();
 	    	}
             wozllajs.LayerManager.removeFrom(this._layer, this);
 		},
+
+        layout : function() {
+            var i, len;
+            var children = this._children;
+            this._layout && this._layout.doLayout();
+            for(i=0,len=children.length; i<len; i++) {
+                children[i].layout();
+            }
+        },
 
 		update : function() {
 			var i, len;
@@ -2610,7 +2920,6 @@ this.wozllajs = this.wozllajs || {};
 			if(!this._componentInited || !this._active) {
 				return;
 			}
-
 			for(behaviourId in this._behaviours) {
 	    		behaviour = this._behaviours[behaviourId];
 	    		behaviour && behaviour.update && behaviour.update();
@@ -2641,16 +2950,47 @@ this.wozllajs = this.wozllajs || {};
 		},
 
 		draw : function(context, visibleRect) {
+            var cacheContext;
 			if(!this._componentInited || !this._active || !this._visible) {
 				return;
 			}
 
 			context.save();
         	this.transform.updateContext(context);
-			this._draw(context, visibleRect);
+            if(this._cacheCanvas) {
+                if(!this._cached) {
+                    cacheContext = this._cacheContext;
+                    cacheContext.translate(-this._cacheOffsetX, -this._cacheOffsetY);
+                    this._draw(cacheContext, visibleRect);
+                    cacheContext.translate(this._cacheOffsetX, this._cacheOffsetY);
+                    this._cached = true;
+                }
+                context.drawImage(this._cacheCanvas, this._cacheOffsetX, this._cacheOffsetY);
+            } else {
+			    this._draw(context, visibleRect);
+            }
 
 			context.restore();
 		},
+
+        cache : function(x, y, width, height) {
+            if(this._cacheCanvas) {
+                this.uncache();
+            }
+            this._cacheOffsetX = x;
+            this._cacheOffsetY = y;
+            this._cacheCanvas = wozllajs.createCanvas(width, height);
+            this._cacheContext = this._cacheCanvas.getContext('2d');
+            this._cached = false;
+        },
+
+        uncache : function() {
+            if(this._cacheCanvas) {
+                this._cacheCanvas.dispose && this._cacheCanvas.dispose();
+                this._cacheCanvas = null;
+            }
+            this._cached = false;
+        },
 
 		setRenderer : function(renderer) {
 			this._renderer = renderer;
@@ -2663,14 +3003,25 @@ this.wozllajs = this.wozllajs || {};
 
 		setCollider : function(collider) {
 			this._collider = collider;
+            this._collider.setGameObject(this);
 		},
 
 		getCollider : function() {
 			return this._collider;
 		},
 
+        setLayout : function(layout) {
+            this._layout = layout;
+            this._layout.setGameObject(this);
+        },
+
+        getLayout : function() {
+            return this._layout;
+        },
+
         setHitTestDelegate : function(delegate) {
             this._hitTestDelegate = delegate;
+            this._hitTestDelegate.setGameObject(this);
         },
 
         getHitTestDelegate : function() {
@@ -2679,6 +3030,7 @@ this.wozllajs = this.wozllajs || {};
 
 		addBehaviour : function(behaviour) {
 			this._behaviours[behaviour.id] = behaviour;
+            this._aliasMap[behaviour.alias] = behaviour;
 			behaviour.setGameObject(this);
 		},
 
@@ -2690,28 +3042,40 @@ this.wozllajs = this.wozllajs || {};
                 }
             }
 			delete this._behaviours[behaviour.id];
+            delete this._aliasMap[behaviour.alias]
 			behaviour.setGameObject(null);
 		},
 
 		getBehaviour : function(id) {
-			return this._behaviours[id];
+			return this._behaviours[id] || this._aliasMap[id];
 		},
 
-        on : function(type, listener) {
-            wozllajs.EventAdmin.on(type, this, listener);
+        on : function(type, listener, scope) {
+            var proxy = listener[this._getSimpleProxyKey(scope, type)] = wozllajs.proxy(listener, scope);
+            wozllajs.EventAdmin.on(type, this, proxy, scope);
         },
 
-        off : function(type, listener) {
-            wozllajs.EventAdmin.off(type, this, listener);
+        once : function(type, listener, scope) {
+            var proxy = listener[this._getSimpleProxyKey(scope, type)] = wozllajs.proxy(listener, scope);
+            wozllajs.EventAdmin.once(type, this, proxy, scope);
+        },
+
+        off : function(type, listener, scope) {
+            wozllajs.EventAdmin.off(type, this, listener[this._getSimpleProxyKey(scope, type)]);
         },
 
         notify : function(type, params) {
             wozllajs.EventAdmin.notify(type, params);
         },
 
+        _getSimpleProxyKey : function(scope, type) {
+            return '_sp_' + scope.UID + '.' + type;
+        },
+
 		_draw : function(context, visibleRect) {
 			var i, len;
 			var children = this._children;
+
 			this._renderer && this._renderer.draw(context, visibleRect);
 			for(i=0,len=children.length; i<len; i++) {
 	    		children[i].draw(context, visibleRect);
@@ -2766,7 +3130,7 @@ this.wozllajs = this.wozllajs || {};
 
 	p.height = 0;
 
-	p.autoClear = true;
+	p.autoClear = false;
 
 	p.GameObject_initialize = p.initialize;
 
@@ -2778,8 +3142,14 @@ this.wozllajs = this.wozllajs || {};
 		this.width = width || 0;
 		this.height = height || 0;
 		this.stageCanvas.width = this.width;
-		this.stageCanvas.height=  this.height;
+		this.stageCanvas.height = this.height;
 	};
+
+    p.tick = function() {
+        this.update();
+        this.lateUpdate();
+        this.draw();
+    };
 
 	p.GameObject_draw = p.draw;
 
@@ -2911,6 +3281,7 @@ this.wozllajs = this.wozllajs || {};
          */
         getConcatenatedMatrix : function() {
             var o = this;
+            matrix.identity();
             while (o != null) {
                 matrix.prependTransform(o.x, o.y, o.scaleX, o.scaleY, o.rotation, o.skewX, o.skewY, o.regX, o.regY)
                     .prependProperties(o.alpha);
@@ -2925,7 +3296,7 @@ this.wozllajs = this.wozllajs || {};
          */
         getMatrix : function() {
             var o = this;
-            return matrix
+            return matrix.identity()
                 .appendTransform(o.x, o.y, o.scaleX, o.scaleY, o.rotation, o.skewX, o.skewY, o.regX, o.regY)
                 .appendProperties(o.alpha);
         },
@@ -2970,15 +3341,36 @@ this.wozllajs = this.wozllajs || {};
 
 	Component.RENDERER = 'renderer';
 	Component.COLLIDER = 'collider';
+    Component.LAYOUT = 'layout';
+    Component.HIT_TEST = 'hitTest';
 	Component.BEHAVIOUR = 'behaviour';
 
+    Component.decorate = function(name, proto, superName, superConstructor) {
+        superConstructor = superConstructor || Component;
+        function DecorateComponent(params) {
+            this.initialize(params);
+        }
+        var p = DecorateComponent.prototype = Object.create(superConstructor.prototype);
+        for(var k in proto) {
+            if(p[k] && (typeof proto[k] === 'function')) {
+                p[superName + "_" + k] = p[k];
+            }
+            p[k] = proto[k];
+        }
+        return DecorateComponent;
+    };
+
 	Component.prototype = {
+
+        UID : null,
 
 	    id : null,
 
 	    alias : null,
 
 	    type : null,
+
+        silent : false,
 
 	    gameObject : null,
 
@@ -2989,6 +3381,7 @@ this.wozllajs = this.wozllajs || {};
 	    			this[p] = params[p];
 	    		}
 	    	}
+            this.UID = wozllajs.UniqueKeyGen ++;
 	    },
 
 	    checkParams : function(params) {},
@@ -3005,12 +3398,12 @@ this.wozllajs = this.wozllajs || {};
 	        return wozllajs.ResourceManager.getResource(id);
 	    },
 
-        on : function(type, listener) {
-            this.gameObject.on(type, listener);
+        on : function(type, listener, scope) {
+            this.gameObject.on(type, listener, scope || this);
         },
 
-        off : function(type, listener) {
-            this.gameObject.off(type, listener);
+        off : function(type, listener, scope) {
+            this.gameObject.off(type, listener, scope || this);
         },
 
         notify : function(type, params) {
@@ -3070,6 +3463,54 @@ this.wozllajs = this.wozllajs || {};
 this.wozllajs = this.wozllajs || {};
 
 (function() {
+    "use strict";
+
+    function Layout(params) {
+        this.initialize(params);
+    }
+
+    var p = Layout.prototype = Object.create(wozllajs.Component.prototype);
+
+    p.type = wozllajs.Component.LAYOUT;
+
+    p.initComponent = function() {
+        this.doLayout();
+    };
+
+    p.doLayout = function() {};
+
+    wozllajs.Layout = Layout;
+
+})();;
+
+this.wozllajs = this.wozllajs || {};
+
+(function() {
+
+    "use strict";
+
+    function HitTestDelegate(params) {
+        this.initialize(params);
+    }
+
+    var p = HitTestDelegate.prototype = Object.create(wozllajs.Component.prototype);
+
+    p.type = wozllajs.Component.HIT_TEST;
+
+    p.testHit = function(x, y) {
+        return false;
+    };
+
+    p.draw = function(context) {
+    };
+
+    wozllajs.HitTestDelegate = HitTestDelegate;
+
+})();;
+
+this.wozllajs = this.wozllajs || {};
+
+(function() {
 	"use strict";
 
 	function Behaviour(params) {
@@ -3080,9 +3521,10 @@ this.wozllajs = this.wozllajs || {};
 
 	p.type = wozllajs.Component.BEHAVIOUR;
 
-	p.update = function(camera) {
-		throw new Error('a subclass of Behaviour must implements method "update"');
-	};
+    /**
+     * @abstract
+     */
+	// p.update = function(camera) {};
 
     /**
      * @abstract
@@ -3093,72 +3535,75 @@ this.wozllajs = this.wozllajs || {};
 	
 })();;
 
-wozllajs.defineComponent('renderer.ImageRenderer', function() {
+wozllajs.defineComponent('renderer.ImageRenderer', {
 
-	var ImageRenderer = function(params) {
-		this.initialize(params);
-	};
+    extend : 'Renderer',
 
-	var p = ImageRenderer.prototype = Object.create(wozllajs.Renderer.prototype);
+	alias : 'renderer.image',
 
-	p.id = 'renderer.ImageRenderer';
+    image : null,
 
-	p.alias = 'renderer.image';
+    src : null,
 
-    p.image = null;
+    sourceX : null,
+    sourceY : null,
+    sourceW : null,
+    sourceH : null,
+    renderWidth : null,
+    renderHeight : null,
 
-    p.src = null;
-
-    p.renderWidth = null;
-    p.renderHeight = null;
-
-    p.initComponent = function() {
+    initComponent : function() {
+        var stage = this.gameObject.getStage();
         this.image = this.getResourceById(this.src);
-        if(this.image && (!this.renderWidth || !this.renderHeight)) {
-            this.renderWidth = this.image.width;
-            this.renderHeight = this.image.height;
-        }
-    };
-
-    p.draw = function(context, visibleRect) {
         if(this.image) {
-            context.drawImage(this.image, 0, 0, this.renderWidth, this.renderHeight);
+            if(!this.renderWidth || !this.renderHeight) {
+                this.renderWidth = this.image.width;
+                this.renderHeight = this.image.height;
+            }
+            if(undefined === this.sourceX || undefined === this.sourceY || !this.sourceW || !this.sourceH) {
+                this.sourceX = 0;
+                this.sourceY = 0;
+                this.sourceW = this.image.width;
+                this.sourceH = this.image.height;
+            }
+            this.renderWidth = wozllajs.SizeParser.parse(this.renderWidth, stage);
+            this.renderHeight = wozllajs.SizeParser.parse(this.renderHeight, stage);
         }
-    };
+    },
 
-    p._collectResources = function(collection) {
+    draw : function(context, visibleRect) {
+        if(this.image) {
+            context.drawImage(this.image,
+                this.sourceX, this.sourceY, this.sourceW, this.sourceH,
+                0, 0, this.renderWidth, this.renderHeight);
+        }
+    },
+
+    _collectResources : function(collection) {
         if(this.src) {
             collection.push(this.src);
         }
-    };
-
-    return ImageRenderer;
+    }
 
 });;
 
-wozllajs.defineComponent('renderer.TextureRenderer', function() {
+wozllajs.defineComponent('renderer.TextureRenderer', {
 
-	var TextureRenderer = function(params) {
-		this.initialize(params);
-	};
+	extend : 'Renderer',
 
-	var p = TextureRenderer.prototype = Object.create(wozllajs.Renderer.prototype);
+	alias : 'renderer.texture',
 
-	p.id = 'renderer.TextureRenderer';
+    image : null,
 
-	p.alias = 'renderer.texture';
+    currentFrame : null,
 
-    p.image = null;
+    src : null,
 
-    p.currentFrame = null;
+    frames : null,
 
-    p.src = null;
+    index : null,
 
-    p.frames = null;
-
-    p.index = null;
-
-    p.initComponent = function() {
+    initComponent : function() {
         if(this.src) {
             this.image = this.getResourceById(this.src);
         }
@@ -3168,9 +3613,14 @@ wozllajs.defineComponent('renderer.TextureRenderer', function() {
         if(this.frames) {
             this.currentFrame = this.frames[this.index];
         }
-    };
+    },
 
-    p.draw = function(context) {
+    changeFrameIndex : function(index) {
+        this.index = index;
+        this.currentFrame = this.frames[index];
+    },
+
+    draw : function(context) {
         var w, h;
         var f = this.currentFrame;
         if(this.image && f) {
@@ -3178,57 +3628,50 @@ wozllajs.defineComponent('renderer.TextureRenderer', function() {
             h = f.h || f.height;
             context.drawImage(this.image, f.x, f.y, w, h, 0, 0, w, h);
         }
-    };
+    },
 
-    p._collectResources = function(res) {
+    _collectResources : function(res) {
         if(this.src) {
             res.push(this.src);
         }
-    };
-
-    return TextureRenderer;
+    }
 
 });;
 
-wozllajs.defineComponent('renderer.AnimationSheetRenderer', function() {
+wozllajs.defineComponent('renderer.AnimationSheetRenderer', {
 
-    var Time = wozllajs.Time;
+    extend : 'Renderer',
 
-	var AnimationSheetRenderer = function(params) {
-		this.initialize(params);
-	};
+    alias : 'renderer.animationSheet',
 
-	var p = AnimationSheetRenderer.prototype = Object.create(wozllajs.Renderer.prototype);
+    image : null,
 
-    p.alias = 'renderer.animationSheet';
+    _playingFrameSequence : null,
 
-    p.image = null;
+    _currentIndex : 0,
 
-    p._playingFrameSequence = null;
+    _currentFrame : null,
 
-    p._currentIndex = 0;
+    _currentFrameStartTime : null,
 
-    p._currentFrame = null;
+    src : null,
 
-    p._currentFrameStartTime = null;
+    frameTime : 33,
 
-    p.src = null;
+    frames : null,
 
-    p.frameTime = 33;
+    animations : null,
 
-    p.frames = null;
+    defaultAnimation : null,
 
-    p.animations = null;
-
-    p.defaultAnimation = null;
-
-    p.initComponent = function() {
+    initComponent : function() {
         if(this.src) {
             this.image = this.getResourceById(this.src);
         }
-    };
+    },
 
-    p.update = function() {
+    update : function() {
+        var Time = wozllajs.Time;
         if(!this.frames) {
             return;
         }
@@ -3250,9 +3693,9 @@ wozllajs.defineComponent('renderer.AnimationSheetRenderer', function() {
             }
             this._currentFrame = this.frames[this._playingFrameSequence[this._currentIndex]];
         }
-    };
+    },
 
-    p.draw = function(context) {
+    draw : function(context) {
         var frame = this._currentFrame, w, h, ox, oy;
         if(this.image && frame) {
             w = frame.width || frame.w;
@@ -3261,9 +3704,9 @@ wozllajs.defineComponent('renderer.AnimationSheetRenderer', function() {
             oy = frame.offsetY || frame.oy || 0;
             context.drawImage(this.image, frame.x, frame.y, w, h, ox, oy, w, h);
         }
-    };
+    },
 
-    p.play = function(animations, defaultAnimation) {
+    play : function(animations, defaultAnimation) {
         var sequence = [];
         var i, len;
         if(!wozllajs.isArray(animations)) {
@@ -3277,15 +3720,164 @@ wozllajs.defineComponent('renderer.AnimationSheetRenderer', function() {
         if(defaultAnimation) {
             this.defaultAnimation = defaultAnimation;
         }
-    };
+    },
 
-    p._collectResources = function(collection) {
+    _collectResources : function(collection) {
         if(this.src) {
             collection.push(this.src);
         }
-    };
+    }
 
-    return AnimationSheetRenderer;
+});;
+
+wozllajs.defineComponent('renderer.JSONAnimationSheetRenderer', {
+
+    extend : 'renderer.AnimationSheetRenderer',
+
+    alias : 'renderer.jsonAnimationSheet',
+
+    ans : null,
+
+    frameTime : null,
+
+    initComponent : function() {
+        if(this.src) {
+            this.image = this.getResourceById(this.src);
+        }
+        if(this.ans) {
+            var ansData = this.getResourceById(this.ans);
+            if(ansData) {
+                this._applyData(ansData);
+            }
+        }
+    },
+
+    _applyData : function(ansData) {
+        this.frames = ansData.frames;
+        this.animations = ansData.animations;
+        this.frameTime = this.frameTime || ansData.frameTime;
+        this.defaultAnimation = this.defaultAnimation || ansData.defaultAnimation;
+    },
+
+    _collectResources : function(collection) {
+        if(this.ans) {
+            collection.push({
+                id : this.ans,
+                src : this.ans,
+                type : 'json'
+            });
+            if(!this.src) {
+                this.src = this.ans + '.png';
+            }
+        }
+        if(this.src) {
+            collection.push(this.src);
+        }
+    }
+
+});;
+
+wozllajs.defineComponent('renderer.JSONTextureRenderer', {
+
+    extend : 'renderer.TextureRenderer',
+
+    alias : 'renderer.jsonTexture',
+
+    texture : null,
+
+    initComponent : function() {
+        if(this.src) {
+            this.image = this.getResourceById(this.src);
+        }
+        if(this.texture) {
+            var ttData = this.getResourceById(this.texture);
+            if(ttData) {
+                this._applyData(ttData);
+            }
+        }
+    },
+
+    _applyData : function(ttData) {
+        this.frames = ttData.frames;
+        this.currentFrame = this.frames[this.index];
+    },
+
+    _collectResources : function(res) {
+        if(this.texture) {
+            res.push({
+                id : this.texture,
+                src  : this.texture,
+                type : 'json'
+            });
+            if(!this.src) {
+                this.src = this.texture + '.png';
+            }
+        }
+        if(this.src) {
+            res.push(this.src);
+        }
+    }
+
+});;
+
+wozllajs.defineComponent('behaviour.ConstantLoopRotation', {
+
+    extend : 'Behaviour',
+
+    silent : true,
+
+    alias : 'behaviour.ConstantLoopRotation',
+
+    speed : 1,
+
+    update : function() {
+        var trans = this.gameObject.transform;
+        trans.rotation += (this.speed * wozllajs.Time.delta || 0);
+        if(trans.rotation > 99999999) {
+            trans.rotation = 0;
+        }
+    }
+
+});;
+
+wozllajs.defineComponent('renderer.TextureButton', {
+
+    extend : 'renderer.JSONTextureRenderer',
+
+    alias : 'renderer.textureButton',
+
+    normalIndex : null,
+
+    pressIndex : null,
+
+    name : 'Undefined',
+
+    initComponent : function() {
+        this.JSONTextureRenderer_initComponent();
+        if(this.frames) {
+            this.currentFrame = this.frames[this.normalIndex];
+            this.on('touchstart', this.onTouchStart, this);
+            this.on('touchend', this.onTouchEnd, this);
+            this.on('click', this.onClick, this);
+        }
+    },
+
+    onTouchStart : function() {
+        this.currentFrame = this.frames[this.pressIndex];
+    },
+
+    onTouchEnd : function() {
+        this.currentFrame = this.frames[this.normalIndex];
+    },
+    onClick : function() {
+        wozllajs.EventAdmin.notify(this.name + '.click');
+    },
+
+    destroyComponent : function() {
+        this.off('touchstart', this.onTouchStart, this);
+        this.off('touchend', this.onTouchEnd, this);
+        this.off('click', this.onClick, this);
+    }
 
 });;
 
@@ -3321,6 +3913,12 @@ this.wozllajs = this.wozllajs || {};
                     else if(component.type === wozllajs.Component.COLLIDER) {
                         gameObject.setCollider(component);
                     }
+                    else if(component.type === wozllajs.Component.HIT_TEST) {
+                        gameObject.setHitTestDelegate(component);
+                    }
+                    else if(component.type === wozllajs.Component.LAYOUT) {
+                        gameObject.setLayout(component);
+                    }
                     else if(component.type === wozllajs.Component.BEHAVIOUR) {
                         gameObject.addBehaviour(component);
                     }
@@ -3339,12 +3937,241 @@ this.wozllajs = this.wozllajs || {};
                 var properties = cmpData.properties;
                 return wozllajs.createComponent(cid, properties);
             },
+
             createGameObject : function(objData) {
                 return new wozllajs.GameObject(objData.gid)
             }
         };
 
     })();
+
+})();;
+
+this.wozllajs = this.wozllajs || {};
+
+(function() {
+
+    var Ajax = {
+
+        getJSON : function(url, onComplete) {
+            Ajax.ajax({
+                url : url,
+                onComplete: function(data) {
+                    if(data) {
+                        onComplete && onComplete(JSON.parse(data));
+                    } else {
+                        onComplete && onComplete({
+                            fail : true,
+                            status : -1
+                        });
+                    }
+                },
+                onFail : function(code) {
+                    onComplete && onComplete({
+                        fail : true,
+                        status : code
+                    });
+                }
+            });
+        },
+
+        get : function(url, onComplete) {
+            Ajax.ajax({
+                url : url,
+                onComplete: onComplete
+            });
+        },
+
+        ajax : function(params) {
+            var xhr = new XMLHttpRequest();
+            xhr.open(params.method || 'GET', params.url, true);
+            try {
+                xhr.send();
+            } catch(e) {
+                setTimeout(function() {
+                    params.onFail && params.onFail(-1);
+                }, 1);
+            }
+            xhr.onreadystatechange = function() {
+                if(4 === xhr.readyState) {
+                    if(xhr.status === 0 || xhr.status === 200) {
+                        params.onComplete && params.onComplete(xhr.responseText);
+                    } else {
+                        params.onFail && params.onFail(xhr.status);
+                    }
+                }
+            }
+        }
+
+    };
+
+    wozllajs.Ajax = Ajax;
+
+})();;
+
+this.wozllajs = this.wozllajs || {};
+
+(function() {
+
+    function NinePatch(x, y, width, height, borders, originImage, region) {
+        this.x = x;
+        this.y = y;
+        this.width = width;
+        this.height = height;
+        this.borders = borders;
+        this.originImage = originImage;
+        this.region = region || {
+            x: 0,
+            y: 0,
+            w: originImage.width,
+            h: originImage.height
+        };
+        this.image = null;
+    }
+
+    NinePatch.prototype = {
+        init : function() {
+            var r = this.region;
+            var b = this.borders;
+            var oimg = this.originImage;
+            var ow = r.w;
+            var oh = r.h;
+            var canvas = wozllajs.createCanvas(this.width, this.height);
+            var ctx = canvas.getContext('2d');
+            canvas.width = this.width;
+            canvas.height = this.height;
+
+            // top left
+            ctx.drawImage(oimg, r.x, r.y, b.left, b.top,
+                0, 0, b.left, b.top);
+
+            // top
+            ctx.drawImage(oimg, r.x + b.left, r.y + 0, ow- b.left- b.right, b.top,
+                b.left, 0, this.width- b.left- b.right, b.top);
+
+            // top right
+            ctx.drawImage(oimg, r.x + ow- b.right, r.y + 0, b.right, b.top,
+                this.width- b.right, 0, b.right, b.top);
+
+            // left
+            ctx.drawImage(oimg, r.x + 0, r.y + b.top, b.left, oh - b.top - b.bottom,
+                0, b.top, b.left, this.height - b.top - b.bottom);
+
+            // left bottom
+            ctx.drawImage(oimg, r.x + 0, r.y + oh - b.bottom, b.left, b.bottom,
+                0, this.height-b.bottom, b.left, b.bottom);
+
+            // bottom
+            ctx.drawImage(oimg, r.x + b.left, r.y + oh-b.bottom, ow- b.left- b.right, b.bottom,
+                b.left, this.height- b.bottom, this.width- b.left- b.right, b.bottom);
+
+            // right bottom
+            ctx.drawImage(oimg, r.x + ow- b.right, r.y + oh - b.bottom, b.right, b.bottom,
+                this.width- b.right, this.height-b.bottom, b.right, b.bottom);
+
+            // right
+            ctx.drawImage(oimg, r.x + ow- b.right, r.y + b.top, b.right, oh- b.top -b.bottom,
+                this.width- b.right, b.top, b.right, this.height- b.top-b.bottom);
+
+            // center
+            ctx.drawImage(oimg, r.x + b.left, r.y + b.top, ow- b.left-b.right, oh- b.top -b.bottom,
+                b.left, b.top, this.width- b.left- b.right, this.height- b.top-b.bottom);
+
+            this.image = canvas;
+
+        },
+        dispose : function() {
+            if(this.image && this.image.dispose) {
+                this.image.dispose();
+            }
+        },
+        draw : function(context) {
+            context.drawImage(this.image, this.x, this.y);
+        }
+    };
+
+    wozllajs.NinePatch = NinePatch;
+})();;
+
+this.wozllajs = this.wozllajs || {};
+
+(function() {
+    function RepeatImage(x, y, width, height, repeat, originImage) {
+        this.x = x;
+        this.y = y;
+        this.width = width;
+        this.height = height;
+        this.repeat = repeat;
+        this.originImage = originImage;
+        this.image = null;
+    }
+
+    RepeatImage.prototype = {
+
+        init : function(type) {
+            var canvas = wozllajs.createCanvas(this.width, this.height);
+            var ctx = canvas.getContext('2d');
+            var i;
+            canvas.width = this.width;
+            canvas.height = this.height;
+
+            if(this.repeat === RepeatImage.REPEAT_X) {
+                if(type === RepeatImage.SCALE) {
+                    ctx.drawImage(this.originImage, 0, 0,
+                        this.originImage.width, this.originImage.height,
+                        0, 0, this.width, this.height);
+                } else if(type === RepeatImage.TILE) {
+                    for(i=0; i<this.width; i+=this.originImage.width) {
+                        ctx.drawImage(this.originImage, i, 0);
+                    }
+                }
+            } else if(this.repeat === RepeatImage.REPEAT_Y) {
+                // TODO repeat y
+            }
+
+            this.image = canvas;
+        },
+        dispose : function() {
+            if(this.image.dispose) {
+                this.image.dispose();
+            }
+        },
+        draw : function(context) {
+            context.drawImage(this.image, this.x, this.y);
+        }
+
+    };
+
+    RepeatImage.REPEAT_X = 1;
+    RepeatImage.REPEAT_Y = 2;
+
+    RepeatImage.SCALE = 3;
+    RepeatImage.TILE = 4;
+
+    wozllajs.RepeatImage = RepeatImage;
+})();;
+
+this.wozllajs = this.wozllajs || {};
+
+this.wozllajs.SizeParser = (function() {
+
+    return {
+        parse : function(size, stage) {
+            var result;
+            if(parseInt(size) == size) {
+                return parseInt(size);
+            }
+            if(typeof size === 'string') {
+                result = /^(\d+(\.\d+)?)%$/.exec(size);
+                if(!result) {
+                    return null;
+                }
+                return parseInt(stage.width * parseFloat(result[1]) / 100);
+            } else {
+                return size;
+            }
+        }
+    }
 
 })();;
 
