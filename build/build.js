@@ -14,6 +14,7 @@ var libs = [
 
 var files = [
     'src/wozllajs/wozllajs.js',
+    'src/wozllajs/geom/geom.js',
     'src/wozllajs/core/Array2D.js',
     'src/wozllajs/core/EventDispatcher.js',
     'src/wozllajs/core/Time.js',
@@ -29,11 +30,21 @@ var files = [
     'src/wozllajs/core/Component.js',
     'src/wozllajs/core/Renderer.js',
     'src/wozllajs/core/Collider.js',
+    'src/wozllajs/core/Layout.js',
+    'src/wozllajs/core/HitTestDelegate.js',
     'src/wozllajs/core/Behaviour.js',
     'src/wozllajs/renderer/ImageRenderer.js',
     'src/wozllajs/renderer/TextureRenderer.js',
     'src/wozllajs/renderer/AnimationSheetRenderer.js',
-    'src/wozllajs/util/StageBuilder.js'
+    'src/wozllajs/renderer/JSONAnimationSheetRenderer.js',
+    'src/wozllajs/renderer/JSONTextureRenderer.js',
+    'src/wozllajs/behaviour/ConstantLoopRotation.js',
+    'src/wozllajs/renderer/TextureButton.js',
+    'src/wozllajs/util/StageBuilder.js',
+    'src/wozllajs/util/Ajax.js',
+    'src/wozllajs/util/NinePatch.js',
+    'src/wozllajs/util/RepeatImage.js',
+    'src/wozllajs/util/SizeParser.js'
 ];
 
 

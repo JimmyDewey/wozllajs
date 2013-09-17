@@ -9,15 +9,36 @@ this.wozllajs = this.wozllajs || {};
 
 	Component.RENDERER = 'renderer';
 	Component.COLLIDER = 'collider';
+    Component.LAYOUT = 'layout';
+    Component.HIT_TEST = 'hitTest';
 	Component.BEHAVIOUR = 'behaviour';
 
+    Component.decorate = function(name, proto, superName, superConstructor) {
+        superConstructor = superConstructor || Component;
+        function DecorateComponent(params) {
+            this.initialize(params);
+        }
+        var p = DecorateComponent.prototype = Object.create(superConstructor.prototype);
+        for(var k in proto) {
+            if(p[k] && (typeof proto[k] === 'function')) {
+                p[superName + "_" + k] = p[k];
+            }
+            p[k] = proto[k];
+        }
+        return DecorateComponent;
+    };
+
 	Component.prototype = {
+
+        UID : null,
 
 	    id : null,
 
 	    alias : null,
 
 	    type : null,
+
+        silent : false,
 
 	    gameObject : null,
 
@@ -28,6 +49,7 @@ this.wozllajs = this.wozllajs || {};
 	    			this[p] = params[p];
 	    		}
 	    	}
+            this.UID = wozllajs.UniqueKeyGen ++;
 	    },
 
 	    checkParams : function(params) {},
@@ -44,12 +66,12 @@ this.wozllajs = this.wozllajs || {};
 	        return wozllajs.ResourceManager.getResource(id);
 	    },
 
-        on : function(type, listener) {
-            this.gameObject.on(type, listener);
+        on : function(type, listener, scope) {
+            this.gameObject.on(type, listener, scope || this);
         },
 
-        off : function(type, listener) {
-            this.gameObject.off(type, listener);
+        off : function(type, listener, scope) {
+            this.gameObject.off(type, listener, scope || this);
         },
 
         notify : function(type, params) {
