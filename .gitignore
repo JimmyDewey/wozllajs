@@ -4,3 +4,13 @@
 
 .idea/libraries/sass_stdlib.xml
 .DS_store
+<<<<<<< HEAD
+/docs
+=======
+/docs/*
+<<<<<<< HEAD
+>>>>>>> CMD
+=======
+/performance/*
+performance
+>>>>>>> CMD
